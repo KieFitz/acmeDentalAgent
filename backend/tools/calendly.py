@@ -3,9 +3,13 @@ import os
 import uuid
 from datetime import datetime, timezone
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
 from backend.db.database import SessionLocal
+from backend.db.models import SessionBooking
 from backend.services.pin_service import create_pin_record, verify_pin
 from backend.services.email_service import send_pin_email
+
+MAX_BOOKINGS_PER_SESSION = 3
 
 CALENDLY_API_KEY = os.getenv("Calendly_API_Key")
 CALENDLY_BASE_URL = "https://api.calendly.com"
@@ -75,10 +79,16 @@ def get_available_slots(date: str) -> str:
 
 
 @tool
-def book_appointment(patient_name: str, patient_email: str, slot: str) -> str:
+def book_appointment(
+    patient_name: str,
+    patient_email: str,
+    slot: str,
+    config: RunnableConfig,
+) -> str:
     """
     Books a dental appointment for a patient and sends a confirmation email with a security PIN.
     The PIN is required to cancel or reschedule this appointment.
+    Maximum 3 bookings per session; each patient name must be unique within the session.
     Args:
         patient_name: Full name of the patient.
         patient_email: Email address of the patient.
@@ -100,13 +110,35 @@ def book_appointment(patient_name: str, patient_email: str, slot: str) -> str:
     except Exception:
         pass  # If parsing fails let the booking proceed — Calendly will validate
 
+    session_id = config.get("configurable", {}).get("thread_id", "default")
+
     # TODO: Wire up to Calendly single-use scheduling links API
     # POST https://api.calendly.com/scheduling_links
     appointment_id = str(uuid.uuid4())
 
     db = SessionLocal()
     try:
+        # Booking abuse: max 3 per session, unique names only
+        prior = db.query(SessionBooking).filter(
+            SessionBooking.session_id == session_id
+        ).all()
+
+        if len(prior) >= MAX_BOOKINGS_PER_SESSION:
+            return (
+                f"A maximum of {MAX_BOOKINGS_PER_SESSION} appointments can be booked per session. "
+                "Please call the clinic at (087) 123-4567 to book additional appointments."
+            )
+
+        name_lower = patient_name.strip().lower()
+        if any(b.patient_name.lower() == name_lower for b in prior):
+            return (
+                f"An appointment for {patient_name} has already been booked in this session. "
+                "Each patient can only be booked once per session."
+            )
+
         pin = create_pin_record(db, appointment_id, patient_name, patient_email)
+        db.add(SessionBooking(session_id=session_id, patient_name=patient_name))
+        db.commit()
     finally:
         db.close()
 
