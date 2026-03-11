@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from langchain_core.tools import tool
 
 
@@ -20,4 +21,15 @@ def get_services() -> str:
     )
 
 
-clinic_tools = [get_clinic_info, get_services]
+@tool
+def get_current_datetime() -> str:
+    """Returns the current date and time in GMT. Use this whenever the patient refers to
+    relative dates like 'today', 'tomorrow', 'next Thursday', or 'this weekend'."""
+    now = datetime.now(timezone.utc)
+    return (
+        f"Current date and time (GMT): {now.strftime('%A, %d %B %Y %H:%M')} UTC. "
+        f"Day of week: {now.strftime('%A')}."
+    )
+
+
+clinic_tools = [get_clinic_info, get_services, get_current_datetime]
