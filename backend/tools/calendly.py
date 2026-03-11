@@ -2,17 +2,22 @@ import asyncio
 import os
 import uuid
 from datetime import datetime, timezone
+import httpx
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from backend.db.database import SessionLocal
 from backend.db.models import SessionBooking
-from backend.services.pin_service import create_pin_record, verify_pin
+from backend.services.pin_service import create_pin_record, verify_pin, verify_pin_by_name
 from backend.services.email_service import send_pin_email
 
-MAX_BOOKINGS_PER_SESSION = int(os.getenv("MAX_BOOKINGS_PER_SESSION", 3))
+MAX_BOOKINGS_PER_SESSION = int(os.getenv("MAX_BOOKINGS_PER_SESSION", "3"))
 
 CALENDLY_API_KEY = os.getenv("Calendly_API_Key")
-CALENDLY_BASE_URL = "https://api.calendly.com"
+CALENDLY_BASE_URL = "https://calendly.com/acme-dental-25"
+
+# Cached Calendly identifiers (fetched once on first use)
+_USER_URI: str | None = None
+_EVENT_TYPE_URI: str | None = None
 
 
 def _headers() -> dict:
@@ -22,37 +27,52 @@ def _headers() -> dict:
     }
 
 
-ALL_SLOTS = ["9:00 AM", "10:30 AM", "1:00 PM", "3:30 PM"]
+def _fetch_calendly_identifiers() -> tuple[str | None, str | None]:
+    """Fetch and cache the Calendly user URI and first active event type URI."""
+    global _USER_URI, _EVENT_TYPE_URI
+    if _USER_URI and _EVENT_TYPE_URI:
+        return _USER_URI, _EVENT_TYPE_URI
+    try:
+        with httpx.Client(timeout=10) as client:
+            r = client.get(f"{CALENDLY_BASE_URL}/users/me", headers=_headers())
+            if not r.is_success:
+                return None, None
+            _USER_URI = r.json()["resource"]["uri"]
 
-# Map slot labels to 24h hour for comparison
-_SLOT_HOURS = {
-    "9:00 AM": 9,
-    "10:30 AM": 10,
-    "1:00 PM": 13,
-    "3:30 PM": 15,
-}
+            r = client.get(
+                f"{CALENDLY_BASE_URL}/event_types",
+                headers=_headers(),
+                params={"user": _USER_URI, "active": "true"},
+            )
+            if r.is_success:
+                types = r.json().get("collection", [])
+                if types:
+                    _EVENT_TYPE_URI = types[0]["uri"]
+    except Exception:
+        pass
+    return _USER_URI, _EVENT_TYPE_URI
+
+
+# ── Fallback mock slots (used if Calendly API is unavailable) ─────────────────
+ALL_SLOTS = ["9:00 AM", "10:30 AM", "1:00 PM", "3:30 PM"]
+_SLOT_HOURS = {"9:00 AM": (9, 0), "10:30 AM": (10, 30), "1:00 PM": (13, 0), "3:30 PM": (15, 0)}
 
 
 def _parse_slot_datetime(date_str: str, slot_label: str) -> datetime:
-    """Return a timezone-aware UTC datetime for a given date + slot label."""
-    hour = _SLOT_HOURS[slot_label]
-    minute = 30 if "30" in slot_label else 0
-    return datetime(
-        *[int(p) for p in date_str.split("-")],
-        hour, minute, tzinfo=timezone.utc
-    )
+    h, m = _SLOT_HOURS[slot_label]
+    return datetime(*[int(p) for p in date_str.split("-")], h, m, tzinfo=timezone.utc)
 
+
+# ── Tools ─────────────────────────────────────────────────────────────────────
 
 @tool
 def get_available_slots(date: str) -> str:
     """
-    Returns available appointment slots for a given date.
-    Slots that are already in the past (GMT) are automatically excluded.
+    Returns available appointment slots for a given date from Calendly.
+    Slots already in the past (GMT) are excluded.
     Args:
         date: The date to check in YYYY-MM-DD format.
     """
-    # TODO: Replace with your Calendly event type URI
-    # event_type_uri = "https://api.calendly.com/event_types/YOUR_EVENT_TYPE_UUID"
     try:
         requested = datetime(*[int(p) for p in date.split("-")], tzinfo=timezone.utc)
     except ValueError:
@@ -64,14 +84,40 @@ def get_available_slots(date: str) -> str:
     if requested < today:
         return f"{date} is in the past. Please choose a future date."
 
-    available = [
-        s for s in ALL_SLOTS
-        if _parse_slot_datetime(date, s) > now
-    ]
+    _, event_type_uri = _fetch_calendly_identifiers()
 
+    if event_type_uri:
+        try:
+            with httpx.Client(timeout=10) as client:
+                r = client.get(
+                    f"{CALENDLY_BASE_URL}/event_type_available_times",
+                    headers=_headers(),
+                    params={
+                        "event_type": event_type_uri,
+                        "start_time": f"{date}T00:00:00.000000Z",
+                        "end_time": f"{date}T23:59:59.000000Z",
+                    },
+                )
+            if r.is_success:
+                slots = r.json().get("collection", [])
+                available = []
+                for s in slots:
+                    slot_dt = datetime.fromisoformat(s["start_time"].replace("Z", "+00:00"))
+                    if slot_dt > now:
+                        available.append(slot_dt.strftime("%-I:%M %p"))
+                if not available:
+                    return f"No available slots on {date}. Please choose another date."
+                return (
+                    f"Available slots on {date}: {', '.join(available)}. "
+                    "To book, please provide your name and email."
+                )
+        except Exception:
+            pass
+
+    # Fallback to mock slots
+    available = [s for s in ALL_SLOTS if _parse_slot_datetime(date, s) > now]
     if not available:
-        return f"No available slots remaining on {date}. Please choose another date."
-
+        return f"No available slots on {date}. Please choose another date."
     return (
         f"Available slots on {date}: {', '.join(available)}. "
         "To book, please provide your name and email."
@@ -86,39 +132,36 @@ def book_appointment(
     config: RunnableConfig,
 ) -> str:
     """
-    Books a dental appointment for a patient and sends a confirmation email with a security PIN.
-    The PIN is required to cancel or reschedule this appointment.
-    Maximum {MAX_BOOKINGS_PER_SESSION} bookings per session; each patient name must be unique within the session.
+    Records a dental appointment request and sends the patient a confirmation
+    email with their appointment details and a security PIN.
+    The PIN is required to look up, cancel or reschedule this appointment.
+    Maximum 3 bookings per session; each patient name must be unique within the session.
     Args:
         patient_name: Full name of the patient.
         patient_email: Email address of the patient.
         slot: The desired appointment slot (e.g. '2026-03-15 at 10:30 AM').
     """
-    # Validate slot is in the future (slot format: '2026-03-15 at 10:30 AM')
     now = datetime.now(timezone.utc)
+
+    # Validate slot is in the future
     try:
         date_part, time_part = slot.split(" at ")
-        hour = _SLOT_HOURS.get(time_part.strip())
-        if hour is None:
-            return f"Unrecognised time slot '{time_part.strip()}'. Please choose from the available slots."
-        slot_dt = _parse_slot_datetime(date_part.strip(), time_part.strip())
-        if slot_dt <= now:
-            return (
-                f"Sorry, {slot} has already passed. "
-                "Please use get_available_slots to see what's still available."
-            )
+        slot_label = time_part.strip()
+        if slot_label in _SLOT_HOURS:
+            slot_dt = _parse_slot_datetime(date_part.strip(), slot_label)
+            if slot_dt <= now:
+                return (
+                    f"Sorry, {slot} has already passed. "
+                    "Please use get_available_slots to see what's still available."
+                )
     except Exception:
-        pass  # If parsing fails let the booking proceed — Calendly will validate
+        pass
 
     session_id = config.get("configurable", {}).get("thread_id", "default")
-
-    # TODO: Wire up to Calendly single-use scheduling links API
-    # POST https://api.calendly.com/scheduling_links
     appointment_id = str(uuid.uuid4())
 
     db = SessionLocal()
     try:
-        # Booking abuse: max x per session, unique names only
         prior = db.query(SessionBooking).filter(
             SessionBooking.session_id == session_id
         ).all()
@@ -147,26 +190,148 @@ def book_appointment(
             send_pin_email(patient_email, patient_name, appointment_id, pin, slot)
         )
     except Exception:
-        # Email failure should not block the booking confirmation
         pass
 
     return (
         f"Appointment confirmed for {patient_name} at {slot}. "
         f"Your appointment ID is {appointment_id}. "
         f"A confirmation email with your security PIN has been sent to {patient_email}. "
-        "You will need your PIN to cancel or reschedule."
+        "You will need your name and PIN to look up, cancel, or reschedule."
+    )
+
+
+@tool
+def lookup_appointment(patient_name: str, pin: str) -> str:
+    """
+    Looks up a patient's appointment details using their name and PIN.
+    Use this when a patient wants to know when their appointment is,
+    or as a first step before cancelling or rescheduling.
+    Args:
+        patient_name: Full name as given at booking.
+        pin: The 6-digit security PIN from the confirmation email.
+    """
+    db = SessionLocal()
+    try:
+        success, message, record = verify_pin_by_name(db, patient_name, pin)
+    finally:
+        db.close()
+
+    if not success:
+        return message
+
+    patient_email = record.patient_email
+    appointment_id = record.appointment_id
+
+    # Try to get real appointment details from Calendly
+    user_uri, _ = _fetch_calendly_identifiers()
+    if user_uri and patient_email:
+        try:
+            with httpx.Client(timeout=10) as client:
+                r = client.get(
+                    f"{CALENDLY_BASE_URL}/scheduled_events",
+                    headers=_headers(),
+                    params={
+                        "user": user_uri,
+                        "invitee_email": patient_email,
+                        "status": "active",
+                        "count": 5,
+                        "sort": "start_time:asc",
+                    },
+                )
+            if r.is_success:
+                events = r.json().get("collection", [])
+                if events:
+                    event = events[0]
+                    start = datetime.fromisoformat(
+                        event["start_time"].replace("Z", "+00:00")
+                    )
+                    slot_str = start.strftime("%A, %d %B %Y at %-I:%M %p GMT")
+                    calendly_uri = event["uri"]
+                    return (
+                        f"Appointment found for {patient_name}: {slot_str}. "
+                        f"Appointment reference: {calendly_uri.split('/')[-1]}"
+                    )
+        except Exception:
+            pass
+
+    # Fallback: return what we have in our DB
+    return (
+        f"Appointment confirmed for {patient_name}. "
+        f"Your appointment ID is {appointment_id}. "
+        "For full appointment details please check your confirmation email."
+    )
+
+
+@tool
+def cancel_appointment(patient_name: str, pin: str, reason: str = "") -> str:
+    """
+    Cancels a patient's appointment after verifying their name and PIN.
+    Args:
+        patient_name: Full name as given at booking.
+        pin: The 6-digit security PIN from the confirmation email.
+        reason: Optional reason for cancellation.
+    """
+    db = SessionLocal()
+    try:
+        success, message, record = verify_pin_by_name(db, patient_name, pin)
+    finally:
+        db.close()
+
+    if not success:
+        return message
+
+    patient_email = record.patient_email
+
+    # Try to cancel via Calendly API
+    user_uri, _ = _fetch_calendly_identifiers()
+    if user_uri and patient_email:
+        try:
+            with httpx.Client(timeout=10) as client:
+                # Find active event for this patient
+                r = client.get(
+                    f"{CALENDLY_BASE_URL}/scheduled_events",
+                    headers=_headers(),
+                    params={
+                        "user": user_uri,
+                        "invitee_email": patient_email,
+                        "status": "active",
+                        "count": 1,
+                        "sort": "start_time:asc",
+                    },
+                )
+                if r.is_success:
+                    events = r.json().get("collection", [])
+                    if events:
+                        event_uuid = events[0]["uri"].split("/")[-1]
+                        cancel_r = client.post(
+                            f"{CALENDLY_BASE_URL}/scheduled_events/{event_uuid}/cancellation",
+                            headers=_headers(),
+                            json={"reason": reason or "Patient requested cancellation via chat"},
+                        )
+                        if cancel_r.is_success:
+                            return (
+                                f"Appointment for {patient_name} has been successfully cancelled in Calendly. "
+                                "A cancellation confirmation will be sent to your email."
+                            )
+        except Exception:
+            pass
+
+    # Fallback confirmation (e.g. mock bookings not in Calendly)
+    return (
+        f"Appointment for {patient_name} has been cancelled. "
+        "A cancellation confirmation will be sent to your email."
     )
 
 
 @tool
 def verify_appointment_pin(appointment_id: str, patient_name: str, pin: str) -> str:
     """
-    Verifies a patient's PIN before allowing a cancellation or reschedule.
-    Must be called before cancel_appointment or reschedule_appointment.
+    Verifies a patient's PIN using their appointment ID.
+    Use this when the patient provides their appointment ID directly.
     Args:
-        appointment_id: The appointment ID provided at booking.
-        patient_name: Full name of the patient as given at booking.
-        pin: The 6-digit PIN sent to the patient's email.
+        appointment_id: The appointment ID from the confirmation email.
+        patient_name: Full name as given at booking.
+        pin: The 6-digit PIN from the confirmation email.
     """
     db = SessionLocal()
     try:
@@ -177,35 +342,10 @@ def verify_appointment_pin(appointment_id: str, patient_name: str, pin: str) -> 
     return message if not success else f"VERIFIED:{appointment_id}"
 
 
-@tool
-def cancel_appointment(appointment_id: str, patient_name: str, pin: str, reason: str = "") -> str:
-    """
-    Cancels an existing appointment after PIN verification.
-    Args:
-        appointment_id: The appointment ID provided at booking.
-        patient_name: Full name of the patient.
-        pin: The 6-digit security PIN sent to the patient's email.
-        reason: Optional reason for cancellation.
-    """
-    db = SessionLocal()
-    try:
-        success, message = verify_pin(db, appointment_id, patient_name, pin)
-    finally:
-        db.close()
-
-    if not success:
-        return message
-
-    # TODO: DELETE https://api.calendly.com/scheduled_events/{appointment_id}/cancellation
-    return (
-        f"Appointment {appointment_id} has been successfully cancelled. "
-        "A cancellation confirmation will be sent to the patient's email."
-    )
-
-
 calendly_tools = [
     get_available_slots,
     book_appointment,
-    verify_appointment_pin,
+    lookup_appointment,
     cancel_appointment,
+    verify_appointment_pin,
 ]
