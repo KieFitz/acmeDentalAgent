@@ -1,24 +1,52 @@
 from datetime import datetime, timezone
+from pathlib import Path
 from langchain_core.tools import tool
+
+_KB_PATH = Path(__file__).parent.parent / "KNOWLEDGE_BASE.md"
+_KB_CONTENT: str | None = None
+
+
+def _load_kb() -> str:
+    global _KB_CONTENT
+    if _KB_CONTENT is None:
+        _KB_CONTENT = _KB_PATH.read_text(encoding="utf-8")
+    return _KB_CONTENT
 
 
 @tool
 def get_clinic_info() -> str:
-    """Returns general information about Acme Dental clinic including hours, address, and phone number."""
+    """Returns general information about Acme Dental clinic: hours, address, phone, and what we offer."""
     return (
-        "Acme Dental Clinic - Hours: Mon-Fri 8am-6pm, Sat 9am-2pm. "
-        "Phone: (555) 123-4567. Address: 123 Main St."
+        "Acme Dental Clinic — routine dental check-ups only (30 min per appointment, one dentist). "
+        "Price: €60 standard | €50 students/seniors (65+). "
+        "Hours: Mon–Fri 8am–6pm, Sat 9am–2pm. "
+        "No walk-ins — all visits must be booked in advance. "
+        "No emergency dental treatment offered. "
+        "Payment: card, contactless, or cash in-clinic. No deposit required to book."
     )
 
 
 @tool
 def get_services() -> str:
-    """Returns the list of dental services offered at Acme Dental clinic."""
+    """Returns the services offered at Acme Dental."""
     return (
-        "Acme Dental offers: general dentistry, routine cleanings, fillings, "
-        "tooth extractions, teeth whitening, orthodontics (braces & Invisalign), "
-        "crowns & bridges, root canals, and emergency dental care."
+        "Acme Dental offers routine dental check-ups only. "
+        "Each check-up (30 min) includes: full oral examination, gum health check, "
+        "review of any concerns, and basic recommendations. "
+        "X-rays are NOT included — the dentist will advise if needed. "
+        "We do not offer fillings, whitening, orthodontics, or emergency care."
     )
+
+
+@tool
+def search_faq(question: str) -> str:
+    """
+    Search the Acme Dental knowledge base to answer patient questions about
+    pricing, policies, cancellations, what to bring, insurance, discounts, etc.
+    Args:
+        question: The patient's question or topic to look up.
+    """
+    return _load_kb()
 
 
 @tool
@@ -32,4 +60,4 @@ def get_current_datetime() -> str:
     )
 
 
-clinic_tools = [get_clinic_info, get_services, get_current_datetime]
+clinic_tools = [get_clinic_info, get_services, search_faq, get_current_datetime]
