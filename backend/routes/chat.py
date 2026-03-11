@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from langchain_core.messages import HumanMessage, AIMessage
 from backend.agent import agent_executor
 from backend.guardrails import check_input, check_output
 
@@ -22,11 +23,16 @@ async def chat(request: ChatRequest):
         return ChatResponse(response=rejection)
 
     try:
-        result = await agent_executor.ainvoke({
-            "input": request.message,
-            "chat_history": request.chat_history,
-        })
-        response = check_output(result["output"])
+        messages = []
+        for msg in request.chat_history:
+            if msg.get("role") == "human":
+                messages.append(HumanMessage(content=msg["content"]))
+            elif msg.get("role") == "assistant":
+                messages.append(AIMessage(content=msg["content"]))
+        messages.append(HumanMessage(content=request.message))
+
+        result = await agent_executor.ainvoke({"messages": messages})
+        response = check_output(result["messages"][-1].content)
         return ChatResponse(response=response)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

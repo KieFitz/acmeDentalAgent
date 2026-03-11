@@ -1,8 +1,7 @@
 import os
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langgraph.prebuilt import create_react_agent
 from backend.tools import all_tools
 
 load_dotenv()
@@ -21,13 +20,4 @@ Your job is to help patients by:
 Always be warm, concise, and professional. If you cannot help with something,
 direct the patient to call the clinic directly at (087) 123-4567."""
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system", SYSTEM_PROMPT),
-    MessagesPlaceholder("chat_history", optional=True),
-    ("human", "{input}"),
-    MessagesPlaceholder("agent_scratchpad"),
-])
-
-agent = create_tool_calling_agent(llm, all_tools, prompt)
-
-agent_executor = AgentExecutor(agent=agent, tools=all_tools, verbose=True)
+agent_executor = create_react_agent(llm, all_tools, prompt=SYSTEM_PROMPT)
