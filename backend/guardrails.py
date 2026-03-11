@@ -7,6 +7,35 @@ check_output — called AFTER the agent responds. Sanitizes the response before
                returning it to the client.
 """
 
+MAX_INPUT_LENGTH = 1000
+
+PROMPT_INJECTION_PATTERNS = [
+    "ignore previous instructions",
+    "ignore your instructions",
+    "you are now",
+    "act as a ",
+    "system:",
+    "[inst]",
+    "repeat your instructions",
+    "what are your instructions",
+    "reveal your prompt",
+    "disregard",
+    "forget everything",
+    "new persona",
+    "pretend you are",
+    "roleplay as",
+]
+
+DATA_FISHING_PATTERNS = [
+    "list all appointments",
+    "show all emails",
+    "dump the database",
+    "all patients",
+    "all records",
+    "export data",
+    "show me the database",
+]
+
 BLOCKED_TOPICS = [
     "prescription", "medication", "drug", "diagnos",
     "legal", "lawsuit", "sue", "refund", "insurance claim",
@@ -24,7 +53,6 @@ DENTAL_REJECTION = (
 )
 
 SENSITIVE_PATTERNS = [
-    # Prevent leaking internal API keys or system details that may slip into output
     "GEMINI_API_KEY",
     "Calendly_API_Key",
     "Bearer ",
@@ -35,20 +63,42 @@ def check_input(message: str) -> str | None:
     """
     Validate incoming patient message.
     Returns a rejection string to send back to the user, or None to allow.
+    Checks run in fail-fast order (cheapest first).
     """
+    # 1. Length limit
+    if len(message) > MAX_INPUT_LENGTH:
+        return "Your message is too long. Please keep it under 1,000 characters."
+
+    # 2. Empty / too short
+    if len(message.strip()) < 2:
+        return "Please enter a message so I can help you."
+
     lower = message.lower()
 
+    # 3. Prompt injection
+    if any(pattern in lower for pattern in PROMPT_INJECTION_PATTERNS):
+        return (
+            "I'm not able to process that request. "
+            "I'm Aria, the Acme Dental receptionist — here to help with appointments and clinic questions."
+        )
+
+    # 4. Data fishing
+    if any(pattern in lower for pattern in DATA_FISHING_PATTERNS):
+        return (
+            "I'm not able to access or share patient records. "
+            "Please call the clinic directly at (087) 123-4567 for administrative queries."
+        )
+
+    # 5. Blocked medical/legal topics
     if any(kw in lower for kw in BLOCKED_TOPICS):
         return (
             "I'm not able to provide medical diagnoses or advice on prescriptions. "
-            "Please consult your dentist directly or call the clinic at (555) 123-4567."
+            "Please consult your dentist directly or call the clinic at (087) 123-4567."
         )
 
+    # 6. Off-topic
     if any(kw in lower for kw in OFF_TOPIC_KEYWORDS):
         return DENTAL_REJECTION
-
-    if len(message.strip()) < 2:
-        return "Please enter a message so I can help you."
 
     return None
 
