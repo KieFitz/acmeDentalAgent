@@ -3,10 +3,9 @@ from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.tools import tool
+from backend.tools import all_tools
 
 load_dotenv()
-
 
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.0-flash",
@@ -20,20 +19,7 @@ Your job is to help patients by:
 - Providing general dental information
 
 Always be warm, concise, and professional. If you cannot help with something,
-direct the patient to call the clinic directly."""
-
-
-@tool
-def get_clinic_info() -> str:
-    """Returns general information about Acme Dental clinic."""
-    return (
-        "Acme Dental Clinic - Hours: Mon-Fri 8am-6pm, Sat 9am-2pm. "
-        "Services: general dentistry, cleanings, fillings, whitening, orthodontics. "
-        "Phone: (555) 123-4567. Address: 123 Main St."
-    )
-
-
-tools = [get_clinic_info]
+direct the patient to call the clinic directly at (555) 123-4567."""
 
 prompt = ChatPromptTemplate.from_messages([
     ("system", SYSTEM_PROMPT),
@@ -42,6 +28,6 @@ prompt = ChatPromptTemplate.from_messages([
     MessagesPlaceholder("agent_scratchpad"),
 ])
 
-agent = create_tool_calling_agent(llm, tools, prompt)
+agent = create_tool_calling_agent(llm, all_tools, prompt)
 
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+agent_executor = AgentExecutor(agent=agent, tools=all_tools, verbose=True)
