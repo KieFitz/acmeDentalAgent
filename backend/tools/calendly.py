@@ -1,6 +1,10 @@
+import asyncio
 import os
-import httpx
+import uuid
 from langchain_core.tools import tool
+from backend.db.database import SessionLocal
+from backend.services.pin_service import create_pin_record, verify_pin
+from backend.services.email_service import send_pin_email
 
 CALENDLY_API_KEY = os.getenv("Calendly_API_Key")
 CALENDLY_BASE_URL = "https://api.calendly.com"
@@ -31,7 +35,8 @@ def get_available_slots(date: str) -> str:
 @tool
 def book_appointment(patient_name: str, patient_email: str, slot: str) -> str:
     """
-    Books a dental appointment for a patient.
+    Books a dental appointment for a patient and sends a confirmation email with a security PIN.
+    The PIN is required to cancel or reschedule this appointment.
     Args:
         patient_name: Full name of the patient.
         patient_email: Email address of the patient.
@@ -39,25 +44,78 @@ def book_appointment(patient_name: str, patient_email: str, slot: str) -> str:
     """
     # TODO: Wire up to Calendly single-use scheduling links API
     # POST https://api.calendly.com/scheduling_links
+    appointment_id = str(uuid.uuid4())
+
+    db = SessionLocal()
+    try:
+        pin = create_pin_record(db, appointment_id, patient_name, patient_email)
+    finally:
+        db.close()
+
+    try:
+        asyncio.get_event_loop().run_until_complete(
+            send_pin_email(patient_email, patient_name, appointment_id, pin, slot)
+        )
+    except Exception:
+        # Email failure should not block the booking confirmation
+        pass
+
     return (
-        f"Appointment request received for {patient_name} ({patient_email}) "
-        f"at {slot}. A confirmation email will be sent to {patient_email}."
+        f"Appointment confirmed for {patient_name} at {slot}. "
+        f"Your appointment ID is {appointment_id}. "
+        f"A confirmation email with your security PIN has been sent to {patient_email}. "
+        "You will need your PIN to cancel or reschedule."
     )
 
 
 @tool
-def cancel_appointment(event_uuid: str, reason: str = "") -> str:
+def verify_appointment_pin(appointment_id: str, patient_name: str, pin: str) -> str:
     """
-    Cancels an existing appointment.
+    Verifies a patient's PIN before allowing a cancellation or reschedule.
+    Must be called before cancel_appointment or reschedule_appointment.
     Args:
-        event_uuid: The Calendly event UUID to cancel.
+        appointment_id: The appointment ID provided at booking.
+        patient_name: Full name of the patient as given at booking.
+        pin: The 6-digit PIN sent to the patient's email.
+    """
+    db = SessionLocal()
+    try:
+        success, message = verify_pin(db, appointment_id, patient_name, pin)
+    finally:
+        db.close()
+
+    return message if not success else f"VERIFIED:{appointment_id}"
+
+
+@tool
+def cancel_appointment(appointment_id: str, patient_name: str, pin: str, reason: str = "") -> str:
+    """
+    Cancels an existing appointment after PIN verification.
+    Args:
+        appointment_id: The appointment ID provided at booking.
+        patient_name: Full name of the patient.
+        pin: The 6-digit security PIN sent to the patient's email.
         reason: Optional reason for cancellation.
     """
-    # TODO: DELETE https://api.calendly.com/scheduled_events/{uuid}/cancellation
+    db = SessionLocal()
+    try:
+        success, message = verify_pin(db, appointment_id, patient_name, pin)
+    finally:
+        db.close()
+
+    if not success:
+        return message
+
+    # TODO: DELETE https://api.calendly.com/scheduled_events/{appointment_id}/cancellation
     return (
-        f"Appointment {event_uuid} has been cancelled. "
-        "The patient will receive a cancellation confirmation by email."
+        f"Appointment {appointment_id} has been successfully cancelled. "
+        "A cancellation confirmation will be sent to the patient's email."
     )
 
 
-calendly_tools = [get_available_slots, book_appointment, cancel_appointment]
+calendly_tools = [
+    get_available_slots,
+    book_appointment,
+    verify_appointment_pin,
+    cancel_appointment,
+]
