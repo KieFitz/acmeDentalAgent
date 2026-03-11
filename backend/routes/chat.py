@@ -1,8 +1,12 @@
+import logging
+import traceback
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, AIMessage
 from backend.agent import agent_executor
 from backend.guardrails import check_input, check_output
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -32,7 +36,17 @@ async def chat(request: ChatRequest):
         messages.append(HumanMessage(content=request.message))
 
         result = await agent_executor.ainvoke({"messages": messages})
-        response = check_output(result["messages"][-1].content)
+        raw = result["messages"][-1].content
+        # Gemini returns a list of content blocks when tools are used
+        if isinstance(raw, list):
+            text = " ".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in raw
+            )
+        else:
+            text = raw
+        response = check_output(text)
         return ChatResponse(response=response)
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
