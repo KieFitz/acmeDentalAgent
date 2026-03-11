@@ -2,7 +2,7 @@ import logging
 import traceback
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from backend.agent import agent_executor
 from backend.guardrails import check_input, check_output
 from backend.db.database import SessionLocal
@@ -15,8 +15,8 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 
 class ChatRequest(BaseModel):
     message: str
-    chat_history: list[dict] = []
     session_id: str = "default"
+    # chat_history removed — LangGraph MemorySaver manages conversation state per thread
 
 
 class ChatResponse(BaseModel):
@@ -43,15 +43,13 @@ async def chat(request: ChatRequest):
         return ChatResponse(response=rejection)
 
     try:
-        messages = []
-        for msg in request.chat_history:
-            if msg.get("role") == "human":
-                messages.append(HumanMessage(content=msg["content"]))
-            elif msg.get("role") == "assistant":
-                messages.append(AIMessage(content=msg["content"]))
-        messages.append(HumanMessage(content=request.message))
+        config = {"configurable": {"thread_id": request.session_id}}
 
-        result = await agent_executor.ainvoke({"messages": messages})
+        result = await agent_executor.ainvoke(
+            {"messages": [HumanMessage(content=request.message)]},
+            config=config,
+        )
+
         raw = result["messages"][-1].content
         # Gemini returns a list of content blocks when tools are used
         if isinstance(raw, list):
@@ -61,6 +59,7 @@ async def chat(request: ChatRequest):
             )
         else:
             text = raw
+
         response = check_output(text)
         _log_messages(request.session_id, request.message, response)
         return ChatResponse(response=response)

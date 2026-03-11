@@ -208,9 +208,6 @@
   // Unique session ID per browser tab — groups conversation logs in the DB
   const SESSION_ID = crypto.randomUUID();
 
-  // Persistent chat history for the session
-  const chatHistory = [];
-
   function appendMessage(text, role) {
     const div = document.createElement("div");
     div.className = `message ${role}`;
@@ -243,15 +240,13 @@
     sendBtn.disabled = true;
 
     appendMessage(text, "user");
-    chatHistory.push({ role: "human", content: text });
-
     showTyping();
 
     try {
       const res = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, chat_history: chatHistory, session_id: SESSION_ID }),
+        body: JSON.stringify({ message: text, session_id: SESSION_ID }),
       });
 
       removeTyping();
@@ -260,7 +255,6 @@
 
       const data = await res.json();
       appendMessage(data.response, "agent");
-      chatHistory.push({ role: "assistant", content: data.response });
     } catch (err) {
       removeTyping();
       errorBanner.style.display = "block";
