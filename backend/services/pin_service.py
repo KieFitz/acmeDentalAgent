@@ -1,5 +1,6 @@
 import secrets
 import bcrypt
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from backend.db.models import AppointmentPin
 
@@ -87,3 +88,47 @@ def verify_pin(
     record.failed_attempts = 0
     db.commit()
     return True, "PIN verified successfully."
+
+
+def verify_pin_by_name(
+    db: Session,
+    patient_name: str,
+    pin: str,
+) -> tuple[bool, str, AppointmentPin | None]:
+    """
+    Verify a PIN by searching for the patient by name (case-insensitive).
+    Used when the patient doesn't have their appointment_id handy.
+    Returns (success, message, record_or_None).
+    """
+    records = (
+        db.query(AppointmentPin)
+        .filter(func.lower(AppointmentPin.patient_name) == patient_name.strip().lower())
+        .order_by(AppointmentPin.created_at.desc())
+        .all()
+    )
+
+    if not records:
+        return False, "No appointment found for that name and PIN.", None
+
+    for record in records:
+        if record.locked:
+            continue
+
+        if _check_pin(pin, record.pin_hash):
+            record.failed_attempts = 0
+            db.commit()
+            return True, "Verified.", record
+
+        record.failed_attempts += 1
+        if record.failed_attempts >= MAX_ATTEMPTS:
+            record.locked = True
+        db.commit()
+        remaining = MAX_ATTEMPTS - record.failed_attempts
+        if remaining > 0:
+            return False, f"Incorrect PIN. {remaining} attempt(s) remaining.", None
+        return False, (
+            "This appointment is now locked due to too many failed PIN attempts. "
+            "Please call the clinic at (087) 123-4567 for assistance."
+        ), None
+
+    return False, "No appointment found for that name and PIN.", None
