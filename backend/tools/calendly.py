@@ -9,7 +9,7 @@ from backend.db.models import SessionBooking
 from backend.services.pin_service import create_pin_record, verify_pin
 from backend.services.email_service import send_pin_email
 
-MAX_BOOKINGS_PER_SESSION = 3
+MAX_BOOKINGS_PER_SESSION = int(os.getenv("MAX_BOOKINGS_PER_SESSION", 3))
 
 CALENDLY_API_KEY = os.getenv("Calendly_API_Key")
 CALENDLY_BASE_URL = "https://api.calendly.com"
@@ -88,7 +88,7 @@ def book_appointment(
     """
     Books a dental appointment for a patient and sends a confirmation email with a security PIN.
     The PIN is required to cancel or reschedule this appointment.
-    Maximum 3 bookings per session; each patient name must be unique within the session.
+    Maximum {MAX_BOOKINGS_PER_SESSION} bookings per session; each patient name must be unique within the session.
     Args:
         patient_name: Full name of the patient.
         patient_email: Email address of the patient.
@@ -118,7 +118,7 @@ def book_appointment(
 
     db = SessionLocal()
     try:
-        # Booking abuse: max 3 per session, unique names only
+        # Booking abuse: max x per session, unique names only
         prior = db.query(SessionBooking).filter(
             SessionBooking.session_id == session_id
         ).all()
