@@ -13,7 +13,7 @@ from backend.services.email_service import send_pin_email
 MAX_BOOKINGS_PER_SESSION = int(os.getenv("MAX_BOOKINGS_PER_SESSION", "3"))
 
 CALENDLY_API_KEY = os.getenv("Calendly_API_Key")
-CALENDLY_BASE_URL = "https://calendly.com/acme-dental-25"
+CALENDLY_BASE_URL = "https://api.calendly.com"
 
 # Cached Calendly identifiers (fetched once on first use)
 _USER_URI: str | None = None
