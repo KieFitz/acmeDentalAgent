@@ -193,10 +193,13 @@ def book_appointment(
         pass
 
     return (
-        f"Appointment confirmed for {patient_name} at {slot}. "
-        f"Your appointment ID is {appointment_id}. "
-        f"A confirmation email with your security PIN has been sent to {patient_email}. "
-        "You will need your name and PIN to look up, cancel, or reschedule."
+        f"Your appointment has been confirmed for {patient_name} at {slot}. "
+        f"A confirmation email is on its way to {patient_email} with your appointment details "
+        f"and a personal 6-digit security PIN. "
+        f"Your PIN is unique to this booking — it was generated just for you and is never shown in this chat. "
+        f"You will need to provide your name and PIN any time you want to look up, cancel, or reschedule your appointment, "
+        f"so please keep it safe. "
+        f"Your appointment reference is {appointment_id}."
     )
 
 
