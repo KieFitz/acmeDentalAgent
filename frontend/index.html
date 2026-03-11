@@ -195,7 +195,10 @@
 </div>
 
 <script>
-  const API_URL = "http://localhost:8000/chat/";
+  // When opened via Docker (nginx), use relative path. When opened as a file, use localhost.
+  const API_URL = window.location.protocol === "file:"
+    ? "http://localhost:8000/chat/"
+    : "/chat/";
 
   const messagesEl  = document.getElementById("messages");
   const inputEl     = document.getElementById("input");
