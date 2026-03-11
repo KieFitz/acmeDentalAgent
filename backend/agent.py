@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import MemorySaver
 from backend.tools import all_tools
 
 load_dotenv()
@@ -20,4 +21,10 @@ Your job is to help patients by:
 Always be warm, concise, and professional. If you cannot help with something,
 direct the patient to call the clinic directly at (087) 123-4567."""
 
-agent_executor = create_react_agent(llm, all_tools, prompt=SYSTEM_PROMPT)
+# NOTE: MemorySaver is in-process only — state is lost on container restart.
+# For persistence across restarts, upgrade to langgraph-checkpoint-sqlite.
+# NOTE: With multiple uvicorn workers each worker has its own MemorySaver instance;
+# sessions that hop between workers will lose context. Run with a single worker.
+memory = MemorySaver()
+
+agent_executor = create_react_agent(llm, all_tools, prompt=SYSTEM_PROMPT, checkpointer=memory)
