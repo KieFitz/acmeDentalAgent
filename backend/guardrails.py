@@ -24,6 +24,7 @@ PROMPT_INJECTION_PATTERNS = [
     "new persona",
     "pretend you are",
     "roleplay as",
+    "run this command",
 ]
 
 DATA_FISHING_PATTERNS = [
@@ -67,19 +68,19 @@ def check_input(message: str) -> str | None:
     """
     # 1. Length limit
     if len(message) > MAX_INPUT_LENGTH:
-        return "Your message is too long. Please keep it under 1,000 characters."
+        return "Sorry, your message is too long. Please keep it under 1,000 characters."
 
     # 2. Empty / too short
     if len(message.strip()) < 2:
-        return "Please enter a message so I can help you."
+        return "Sorry, your message is too short. Please enter more details so I can help you."
 
     lower = message.lower()
 
     # 3. Prompt injection
     if any(pattern in lower for pattern in PROMPT_INJECTION_PATTERNS):
         return (
-            "I'm not able to process that request. "
-            "I'm Aria, the Acme Dental receptionist — here to help with appointments and clinic questions."
+            "Sorry, I'm not able to process that request. I can only help with booking or ammending check-up appointments and clinic queries you might have. "
+            "I'm Aria, the Acme Dental receptionist — here to help with appointments and clinic queries."
         )
 
     # 4. Data fishing
