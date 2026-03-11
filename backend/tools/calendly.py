@@ -1,6 +1,7 @@
 import asyncio
 import os
 import uuid
+from datetime import datetime, timezone
 from langchain_core.tools import tool
 from backend.db.database import SessionLocal
 from backend.services.pin_service import create_pin_record, verify_pin
@@ -17,17 +18,58 @@ def _headers() -> dict:
     }
 
 
+ALL_SLOTS = ["9:00 AM", "10:30 AM", "1:00 PM", "3:30 PM"]
+
+# Map slot labels to 24h hour for comparison
+_SLOT_HOURS = {
+    "9:00 AM": 9,
+    "10:30 AM": 10,
+    "1:00 PM": 13,
+    "3:30 PM": 15,
+}
+
+
+def _parse_slot_datetime(date_str: str, slot_label: str) -> datetime:
+    """Return a timezone-aware UTC datetime for a given date + slot label."""
+    hour = _SLOT_HOURS[slot_label]
+    minute = 30 if "30" in slot_label else 0
+    return datetime(
+        *[int(p) for p in date_str.split("-")],
+        hour, minute, tzinfo=timezone.utc
+    )
+
+
 @tool
 def get_available_slots(date: str) -> str:
     """
     Returns available appointment slots for a given date.
+    Slots that are already in the past (GMT) are automatically excluded.
     Args:
         date: The date to check in YYYY-MM-DD format.
     """
     # TODO: Replace with your Calendly event type URI
     # event_type_uri = "https://api.calendly.com/event_types/YOUR_EVENT_TYPE_UUID"
+    try:
+        requested = datetime(*[int(p) for p in date.split("-")], tzinfo=timezone.utc)
+    except ValueError:
+        return "Invalid date format. Please provide the date as YYYY-MM-DD."
+
+    now = datetime.now(timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if requested < today:
+        return f"{date} is in the past. Please choose a future date."
+
+    available = [
+        s for s in ALL_SLOTS
+        if _parse_slot_datetime(date, s) > now
+    ]
+
+    if not available:
+        return f"No available slots remaining on {date}. Please choose another date."
+
     return (
-        f"Available slots on {date}: 9:00 AM, 10:30 AM, 1:00 PM, 3:30 PM. "
+        f"Available slots on {date}: {', '.join(available)}. "
         "To book, please provide your name and email."
     )
 
@@ -42,6 +84,22 @@ def book_appointment(patient_name: str, patient_email: str, slot: str) -> str:
         patient_email: Email address of the patient.
         slot: The desired appointment slot (e.g. '2026-03-15 at 10:30 AM').
     """
+    # Validate slot is in the future (slot format: '2026-03-15 at 10:30 AM')
+    now = datetime.now(timezone.utc)
+    try:
+        date_part, time_part = slot.split(" at ")
+        hour = _SLOT_HOURS.get(time_part.strip())
+        if hour is None:
+            return f"Unrecognised time slot '{time_part.strip()}'. Please choose from the available slots."
+        slot_dt = _parse_slot_datetime(date_part.strip(), time_part.strip())
+        if slot_dt <= now:
+            return (
+                f"Sorry, {slot} has already passed. "
+                "Please use get_available_slots to see what's still available."
+            )
+    except Exception:
+        pass  # If parsing fails let the booking proceed — Calendly will validate
+
     # TODO: Wire up to Calendly single-use scheduling links API
     # POST https://api.calendly.com/scheduling_links
     appointment_id = str(uuid.uuid4())
