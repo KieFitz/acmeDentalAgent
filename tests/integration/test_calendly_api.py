@@ -147,7 +147,7 @@ def test_create_invitee_booking():
     REQUIRES a paid Calendly plan (Standard/Teams/Enterprise).
     """
     INVITEE_NAME = "Tester Test"
-    INVITEE_EMAIL = "kieran.fitzgerald@eascadesk.ie"
+    INVITEE_EMAIL = "email@email.com"
 
     # Step 1: Get event type
     r = httpx.get(f"{BASE_URL}/users/me", headers=headers())
