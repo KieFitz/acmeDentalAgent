@@ -37,9 +37,13 @@ DATA_FISHING_PATTERNS = [
     "show me the database",
 ]
 
-BLOCKED_TOPICS = [
+BLOCKED_TOPICS_MEDICAL = [
     "prescription", "medication", "drug", "diagnos",
-    "legal", "lawsuit", "sue", "refund", "insurance claim",
+    "legal",
+]
+
+BLOCKED_TOPICS_LEGAL = [
+    "sue", "lawsuit", "legal trouble", "attorney", "lawyer", "court",
 ]
 
 OFF_TOPIC_KEYWORDS = [
@@ -90,12 +94,20 @@ def check_input(message: str) -> str | None:
             "Please call the clinic directly at (087) 123-4567 for administrative queries."
         )
 
-    # 5. Blocked medical/legal topics
-    if any(kw in lower for kw in BLOCKED_TOPICS):
+    # 5. Blocked medical topics
+    if any(kw in lower for kw in BLOCKED_TOPICS_MEDICAL):
         return (
             "I'm not able to provide medical diagnoses or advice on prescriptions. "
             "Please consult your dentist directly or call the clinic at (087) 123-4567."
         )
+    # 5.1 Blocked legal topics
+    if any(kw in lower for kw in BLOCKED_TOPICS_LEGAL):
+        return (
+            "I'm sorry to hear you have a legal concern. "
+            "I am not able to provide legal advice or process legal matters directly. "
+            "Please contact us at (087) 123-4567 to speak with a representative who can assist you further. "
+        )
+
 
     # 6. Off-topic
     if any(kw in lower for kw in OFF_TOPIC_KEYWORDS):
