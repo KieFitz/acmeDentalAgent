@@ -146,22 +146,18 @@ uv run pytest tests/ -v
 ## TODO
 
 ### High priority
-- [ ] **Refine prompts** — review conversation logs to identify where Aria gives robotic or unclear responses; improve the system prompt and tool docstrings accordingly
+- [x] **Refine prompts** — review conversation logs to identify where Aria gives robotic or unclear responses; improve the system prompt and tool docstrings accordingly
 - [x] **Confirm live bookings with Calendly** — wire up `book_appointment` to create a real Calendly event via the scheduling links API or a Calendly webhook flow; currently bookings are recorded locally only
 - [x] **Test fraud prevention end-to-end** — manually test PIN lockout, wrong-name rejection, and 3-booking-per-session limit with live data; verify bcrypt timing is acceptable
-- [] **ADD that agent should resend PIN on request** - If user lost pin they should be able to request pin to be resent via email in order to ammend any bookings in new session.
-
-- [] **Agent to ammend bookings if session same** - Agent should be able to ammend or cancel bookings if the session is still the same, without requirment for PIN. PIN should only be for if there is a new session.
-
+- [X] **Agent to ammend bookings if session same** - Agent should be able to ammend or cancel bookings if the session is still the same, without requirment for PIN. PIN should only be for if there is a new session.
+- [ ] **Make Sure AI doesn't invent opening hours**
 
 ### Medium priority
-- [ ] **Edge case hunting** — test corner cases: same patient name different email, booking on a Saturday, cancelling an already-cancelled appointment, lookup when Calendly API is down
-- [ ] **Wire up Calendly available slots** — confirm `get_available_slots` is returning real times from `GET /event_type_available_times` for the correct event type
-- [ ] **Reschedule flow** — implement `reschedule_appointment(patient_name, pin, new_slot)` tool; currently only cancel is supported
+- [ ] **Edge case hunting** — test corner cases: same patient name different email, booking on a Saturday[failed], cancelling an already-cancelled appointment, lookup when Calendly API is down, rescheduling for same time and day.
+- [X] **Wire up Calendly available slots** — confirm `get_available_slots` is returning real times from `GET /event_type_available_times` for the correct event type
+- [X] **Reschedule flow** — implement `reschedule_appointment(patient_name, pin, new_slot)` tool; currently only cancel is supported. reschedule not supported in API from Calendly.
 
 ### Lower priority
 - [ ] **Persistent MemorySaver** — replace in-memory `MemorySaver` with `langgraph-checkpoint-sqlite` so conversation context survives container restarts
 - [ ] **Rate limiting** — add per-IP or per-session message rate limiting to prevent API abuse
-- [ ] **Admin dashboard** — simple UI to browse conversation logs and flag sessions for review
-- [ ] **Extend knowledge base** — add dentist bio, specific treatment information, insurance partners to `KNOWLEDGE_BASE.md`
-- [ ] **Add .ics calendar invite** — attach an `.ics` file to the confirmation email so patients can add the appointment to Google Calendar / Outlook; send a `METHOD:CANCEL` `.ics` on cancellation
+- [X] **Admin dashboard** — simple UI to browse conversation logs and flag sessions for review
