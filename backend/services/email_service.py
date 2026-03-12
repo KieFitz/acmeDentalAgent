@@ -1,3 +1,6 @@
+#####################################################################################
+# This email feature will be discontinued as calendly supports auto email confirmations. PIN will be sent in chat and in calendly invite.
+#####################################################################################
 import os
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
