@@ -204,26 +204,51 @@ def book_appointment(
 
 
 @tool
-def lookup_appointment(patient_name: str, pin: str) -> str:
+def lookup_appointment(patient_name: str, config: RunnableConfig, pin: str = "") -> str:
     """
-    Looks up a patient's appointment details using their name and PIN.
+    Looks up a patient's appointment details.
+    If the booking was made in the current session, no PIN is needed.
+    If this is a new session, the patient must provide their 6-digit PIN.
     Use this when a patient wants to know when their appointment is,
     or as a first step before cancelling or rescheduling.
     Args:
         patient_name: Full name as given at booking.
-        pin: The 6-digit security PIN from the confirmation email.
+        pin: The 6-digit security PIN from the confirmation email (only needed in a new session).
     """
+    session_id = config.get("configurable", {}).get("thread_id", "default")
+
     db = SessionLocal()
     try:
-        success, message, record = verify_pin_by_name(db, patient_name, pin)
+        # Check if this booking was made in the current session — no PIN needed
+        session_match = db.query(SessionBooking).filter(
+            SessionBooking.session_id == session_id,
+            SessionBooking.patient_name.ilike(patient_name.strip()),
+        ).first()
+
+        if session_match:
+            # Fetch the record directly without PIN verification
+            from backend.db.models import AppointmentPin
+            record = db.query(AppointmentPin).filter(
+                AppointmentPin.patient_name.ilike(patient_name.strip())
+            ).order_by(AppointmentPin.created_at.desc()).first()
+            if not record:
+                return f"No appointment record found for {patient_name}."
+            patient_email = record.patient_email
+            appointment_id = record.appointment_id
+        else:
+            # New session — PIN required
+            if not pin:
+                return (
+                    "To look up your appointment from a new session, "
+                    "please provide your 6-digit security PIN from your confirmation email."
+                )
+            success, message, record = verify_pin_by_name(db, patient_name, pin)
+            if not success:
+                return message
+            patient_email = record.patient_email
+            appointment_id = record.appointment_id
     finally:
         db.close()
-
-    if not success:
-        return message
-
-    patient_email = record.patient_email
-    appointment_id = record.appointment_id
 
     # Try to get real appointment details from Calendly
     user_uri, _ = _fetch_calendly_identifiers()
@@ -266,24 +291,47 @@ def lookup_appointment(patient_name: str, pin: str) -> str:
 
 
 @tool
-def cancel_appointment(patient_name: str, pin: str, reason: str = "") -> str:
+def cancel_appointment(patient_name: str, config: RunnableConfig, pin: str = "", reason: str = "") -> str:
     """
-    Cancels a patient's appointment after verifying their name and PIN.
+    Cancels a patient's appointment.
+    If the booking was made in the current session, no PIN is needed.
+    If this is a new session, the patient must provide their 6-digit PIN.
     Args:
         patient_name: Full name as given at booking.
-        pin: The 6-digit security PIN from the confirmation email.
+        pin: The 6-digit security PIN from the confirmation email (only needed in a new session).
         reason: Optional reason for cancellation.
     """
+    session_id = config.get("configurable", {}).get("thread_id", "default")
+
     db = SessionLocal()
     try:
-        success, message, record = verify_pin_by_name(db, patient_name, pin)
+        # Check if this booking was made in the current session — no PIN needed
+        session_match = db.query(SessionBooking).filter(
+            SessionBooking.session_id == session_id,
+            SessionBooking.patient_name.ilike(patient_name.strip()),
+        ).first()
+
+        if session_match:
+            from backend.db.models import AppointmentPin
+            record = db.query(AppointmentPin).filter(
+                AppointmentPin.patient_name.ilike(patient_name.strip())
+            ).order_by(AppointmentPin.created_at.desc()).first()
+            if not record:
+                return f"No appointment record found for {patient_name}."
+            patient_email = record.patient_email
+        else:
+            # New session — PIN required
+            if not pin:
+                return (
+                    "To cancel your appointment from a new session, "
+                    "please provide your 6-digit security PIN from your confirmation email."
+                )
+            success, message, record = verify_pin_by_name(db, patient_name, pin)
+            if not success:
+                return message
+            patient_email = record.patient_email
     finally:
         db.close()
-
-    if not success:
-        return message
-
-    patient_email = record.patient_email
 
     # Try to cancel via Calendly API
     user_uri, _ = _fetch_calendly_identifiers()
