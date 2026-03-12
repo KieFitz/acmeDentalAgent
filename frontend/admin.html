@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Acme Dental — Conversation Admin</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f6f9;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; }
+    header span { color: #8b9fc1; font-size: 0.85rem; }
+
+    .container { padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
+
+    /* ── Status filters ── */
+    .filters {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .filters span { font-size: 0.85rem; color: #666; margin-right: 4px; }
+    .filter-btn {
+      padding: 5px 14px;
+      border-radius: 20px;
+      border: 1px solid #d0d7e3;
+      background: #fff;
+      cursor: pointer;
+      font-size: 0.82rem;
+      transition: all 0.15s;
+    }
+    .filter-btn.active, .filter-btn:hover { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+
+    /* ── Table ── */
+    .table-wrap { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      background: #f0f3f8;
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: #555;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    tbody tr { border-bottom: 1px solid #f0f3f8; cursor: pointer; transition: background .1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f8fafc; }
+    tbody td { padding: 12px 16px; font-size: 0.87rem; vertical-align: middle; }
+
+    .session-id { font-family: monospace; font-size: 0.78rem; color: #555; }
+    .preview { color: #444; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .msg-count { color: #888; font-size: 0.82rem; text-align: center; }
+    .time { color: #888; font-size: 0.78rem; white-space: nowrap; }
+
+    /* ── Status badges ── */
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .badge-unreviewed { background: #e9ecef; color: #555; }
+    .badge-safe       { background: #d1fae5; color: #065f46; }
+    .badge-risky      { background: #fff3cd; color: #856404; }
+    .badge-dangerous  { background: #fee2e2; color: #991b1b; }
+
+    /* ── Modal overlay ── */
+    .overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.45);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .overlay.open { display: flex; }
+
+    .modal {
+      background: #fff;
+      border-radius: 12px;
+      width: min(760px, 95vw);
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0,0,0,.2);
+    }
+    .modal-header {
+      padding: 18px 24px;
+      border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .modal-header h2 { font-size: 0.95rem; font-weight: 600; }
+    .modal-header .meta { font-size: 0.78rem; color: #888; margin-top: 2px; }
+    .close-btn { background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #888; line-height: 1; padding: 2px 6px; }
+    .close-btn:hover { color: #333; }
+
+    /* ── Transcript ── */
+    .transcript {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; font-size: 0.87rem; line-height: 1.5; }
+    .msg.human { align-self: flex-end; background: #1a1a2e; color: #fff; border-bottom-right-radius: 3px; }
+    .msg.assistant { align-self: flex-start; background: #f0f3f8; color: #1a1a2e; border-bottom-left-radius: 3px; }
+    .msg-time { font-size: 0.68rem; opacity: .6; margin-top: 4px; }
+
+    /* ── Review panel ── */
+    .review-panel {
+      padding: 16px 24px;
+      border-top: 1px solid #e2e8f0;
+      background: #fafbfc;
+    }
+    .review-panel label { font-size: 0.82rem; font-weight: 600; color: #444; display: block; margin-bottom: 8px; }
+    .status-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .status-btn {
+      padding: 6px 16px;
+      border-radius: 6px;
+      border: 2px solid transparent;
+      cursor: pointer;
+      font-size: 0.82rem;
+      font-weight: 600;
+      transition: all .15s;
+      background: #e9ecef;
+      color: #555;
+    }
+    .status-btn:hover { opacity: .85; }
+    .status-btn.selected-safe      { background: #d1fae5; color: #065f46; border-color: #10b981; }
+    .status-btn.selected-risky     { background: #fff3cd; color: #856404; border-color: #f59e0b; }
+    .status-btn.selected-dangerous { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
+    .status-btn.selected-unreviewed{ background: #e9ecef; color: #555;    border-color: #aaa; }
+
+    .notes-row { display: flex; gap: 8px; }
+    #modal-notes {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #d0d7e3;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      resize: none;
+      height: 40px;
+      font-family: inherit;
+    }
+    #modal-notes:focus { outline: none; border-color: #1a1a2e; }
+    .save-btn {
+      padding: 8px 20px;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .save-btn:hover { background: #2d3561; }
+    .save-msg { font-size: 0.78rem; color: #065f46; margin-top: 6px; display: none; }
+
+    .empty { padding: 48px; text-align: center; color: #aaa; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Acme Dental — Conversation Admin</h1>
+    <span>Review and flag agent conversations</span>
+  </div>
+</header>
+
+<div class="container">
+  <div class="filters">
+    <span>Filter:</span>
+    <button class="filter-btn active" data-filter="all">All</button>
+    <button class="filter-btn" data-filter="unreviewed">Unreviewed</button>
+    <button class="filter-btn" data-filter="safe">Safe</button>
+    <button class="filter-btn" data-filter="risky">Risky</button>
+    <button class="filter-btn" data-filter="dangerous">Dangerous</button>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Session ID</th>
+          <th>First Message Preview</th>
+          <th style="text-align:center">Messages</th>
+          <th>Started</th>
+          <th>Last Active</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="conv-table-body">
+        <tr><td colspan="6" class="empty">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <h2 id="modal-title">Conversation</h2>
+        <div class="meta" id="modal-meta"></div>
+      </div>
+      <button class="close-btn" id="close-btn">&times;</button>
+    </div>
+    <div class="transcript" id="transcript"></div>
+    <div class="review-panel">
+      <label>Review status</label>
+      <div class="status-btns">
+        <button class="status-btn" data-status="unreviewed">Unreviewed</button>
+        <button class="status-btn" data-status="safe">Safe</button>
+        <button class="status-btn" data-status="risky">Risky</button>
+        <button class="status-btn" data-status="dangerous">Dangerous / Needs guard</button>
+      </div>
+      <div class="notes-row">
+        <textarea id="modal-notes" placeholder="Optional notes…"></textarea>
+        <button class="save-btn" id="save-btn">Save</button>
+      </div>
+      <div class="save-msg" id="save-msg">Saved.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API = '/admin-api';
+  let allConversations = [];
+  let activeFilter = 'all';
+  let currentSessionId = null;
+  let currentStatus = 'unreviewed';
+
+  // ── Fetch & render table ──────────────────────────────────────────────────
+
+  async function loadConversations() {
+    try {
+      const res = await fetch(`${API}/conversations`);
+      allConversations = await res.json();
+      renderTable();
+    } catch {
+      document.getElementById('conv-table-body').innerHTML =
+        '<tr><td colspan="6" class="empty">Failed to load conversations.</td></tr>';
+    }
+  }
+
+  function renderTable() {
+    const body = document.getElementById('conv-table-body');
+    const filtered = activeFilter === 'all'
+      ? allConversations
+      : allConversations.filter(c => c.status === activeFilter);
+
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="6" class="empty">No conversations found.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = filtered.map(c => `
+      <tr data-sid="${c.session_id}">
+        <td><span class="session-id">${c.session_id.slice(0, 18)}…</span></td>
+        <td><span class="preview">${escHtml(c.preview || '(no messages)')}</span></td>
+        <td class="msg-count">${c.message_count}</td>
+        <td class="time">${fmtTime(c.started_at)}</td>
+        <td class="time">${fmtTime(c.last_at)}</td>
+        <td><span class="badge badge-${c.status}">${c.status}</span></td>
+      </tr>
+    `).join('');
+
+    body.querySelectorAll('tr[data-sid]').forEach(row => {
+      row.addEventListener('click', () => openModal(row.dataset.sid));
+    });
+  }
+
+  // ── Filter buttons ────────────────────────────────────────────────────────
+
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+      renderTable();
+    });
+  });
+
+  // ── Modal ─────────────────────────────────────────────────────────────────
+
+  async function openModal(sessionId) {
+    currentSessionId = sessionId;
+    document.getElementById('overlay').classList.add('open');
+    document.getElementById('transcript').innerHTML = '<div style="padding:16px;color:#aaa;font-size:.85rem">Loading…</div>';
+    document.getElementById('save-msg').style.display = 'none';
+
+    const res = await fetch(`${API}/conversations/${sessionId}`);
+    const data = await res.json();
+
+    document.getElementById('modal-title').textContent = `Session ${sessionId.slice(0, 18)}…`;
+    document.getElementById('modal-meta').textContent =
+      `${data.messages.length} messages`;
+
+    // Transcript
+    document.getElementById('transcript').innerHTML = data.messages.map(m => `
+      <div class="msg ${m.role}">
+        ${escHtml(m.content)}
+        <div class="msg-time">${fmtTime(m.created_at)}</div>
+      </div>
+    `).join('');
+
+    // Review state
+    currentStatus = data.status || 'unreviewed';
+    document.getElementById('modal-notes').value = data.notes || '';
+    updateStatusButtons(currentStatus);
+  }
+
+  document.getElementById('close-btn').addEventListener('click', closeModal);
+  document.getElementById('overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('overlay')) closeModal();
+  });
+
+  function closeModal() {
+    document.getElementById('overlay').classList.remove('open');
+    currentSessionId = null;
+  }
+
+  // ── Status buttons inside modal ───────────────────────────────────────────
+
+  document.querySelectorAll('.status-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentStatus = btn.dataset.status;
+      updateStatusButtons(currentStatus);
+    });
+  });
+
+  function updateStatusButtons(status) {
+    document.querySelectorAll('.status-btn').forEach(b => {
+      b.className = 'status-btn';
+      if (b.dataset.status === status) b.classList.add(`selected-${status}`);
+    });
+  }
+
+  // ── Save ──────────────────────────────────────────────────────────────────
+
+  document.getElementById('save-btn').addEventListener('click', async () => {
+    if (!currentSessionId) return;
+    const notes = document.getElementById('modal-notes').value;
+    await fetch(`${API}/conversations/${currentSessionId}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: currentStatus, notes }),
+    });
+
+    // Update local cache and re-render table
+    const conv = allConversations.find(c => c.session_id === currentSessionId);
+    if (conv) { conv.status = currentStatus; conv.notes = notes; }
+    renderTable();
+
+    const msg = document.getElementById('save-msg');
+    msg.style.display = 'block';
+    setTimeout(() => { msg.style.display = 'none'; }, 2000);
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            .replace(/"/g,'&quot;').replace(/\n/g,'<br>');
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-IE', { day:'2-digit', month:'short' }) + ' ' +
+           d.toLocaleTimeString('en-IE', { hour:'2-digit', minute:'2-digit' });
+  }
+
+  loadConversations();
+</script>
+</body>
+</html>
