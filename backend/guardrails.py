@@ -48,7 +48,7 @@ BLOCKED_TOPICS_LEGAL = [
 
 OFF_TOPIC_KEYWORDS = [
     "weather", "stock", "sports", "politic", "recipe",
-    "movie", "music", "game", "crypto", "bitcoin",
+    "movie", "music", "game", "crypto", "bitcoin", "AI model", "language model",
 ]
 
 DENTAL_REJECTION = (
