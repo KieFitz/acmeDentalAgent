@@ -146,8 +146,40 @@ def book_appointment(
                 f"An appointment for {patient_name} has already been booked in this session. "
                 "Each patient can only be booked once per session."
             )
+
+        # Check if this patient already has an active Calendly appointment
+        from backend.db.models import AppointmentPin
+        existing = (
+            db.query(AppointmentPin)
+            .filter(AppointmentPin.patient_name.ilike(patient_name.strip()))
+            .order_by(AppointmentPin.created_at.desc())
+            .first()
+        )
     finally:
         db.close()
+
+    # If a record exists, verify with Calendly whether the appointment is still active
+    if existing:
+        try:
+            with httpx.Client(timeout=10) as client:
+                r = client.get(
+                    f"{CALENDLY_BASE_URL}/scheduled_events/{existing.appointment_id}",
+                    headers=_headers(),
+                )
+            if r.is_success:
+                event = r.json().get("resource", {})
+                if event.get("status") == "active":
+                    start = datetime.fromisoformat(
+                        event["start_time"].replace("Z", "+00:00")
+                    )
+                    slot_str = start.strftime("%A, %d %B %Y at %-I:%M %p GMT")
+                    return (
+                        f"{patient_name} already has an active appointment booked for {slot_str}. "
+                        "Would you like to reschedule it to a different time instead? "
+                        "If this booking is for a different person, please provide their full name."
+                    )
+        except Exception:
+            pass  # Calendly unreachable — allow booking to proceed
 
     # Generate PIN before creating the Calendly booking so it can be embedded
     pin = generate_pin()
