@@ -1,18 +1,15 @@
-import asyncio
 import os
-import uuid
 from datetime import datetime, timezone
 import httpx
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from backend.db.database import SessionLocal
 from backend.db.models import SessionBooking
-from backend.services.pin_service import create_pin_record, verify_pin, verify_pin_by_name
-from backend.services.email_service import send_pin_email
+from backend.services.pin_service import create_pin_record, generate_pin, verify_pin, verify_pin_by_name
 
 MAX_BOOKINGS_PER_SESSION = int(os.getenv("MAX_BOOKINGS_PER_SESSION", "3"))
 
-CALENDLY_API_KEY = os.getenv("Calendly_API_Key")
+CALENDLY_API_KEY = os.getenv("CALENDLY_API_KEY")
 CALENDLY_BASE_URL = "https://api.calendly.com"
 
 # Cached Calendly identifiers (fetched once on first use)
@@ -51,17 +48,6 @@ def _fetch_calendly_identifiers() -> tuple[str | None, str | None]:
     except Exception:
         pass
     return _USER_URI, _EVENT_TYPE_URI
-
-
-# ── Fallback mock slots (used if Calendly API is unavailable) ─────────────────
-ALL_SLOTS = ["9:00 AM", "10:30 AM", "1:00 PM", "3:30 PM"]
-_SLOT_HOURS = {"9:00 AM": (9, 0), "10:30 AM": (10, 30), "1:00 PM": (13, 0), "3:30 PM": (15, 0)}
-
-
-def _parse_slot_datetime(date_str: str, slot_label: str) -> datetime:
-    h, m = _SLOT_HOURS[slot_label]
-    return datetime(*[int(p) for p in date_str.split("-")], h, m, tzinfo=timezone.utc)
-
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
@@ -114,14 +100,7 @@ def get_available_slots(date: str) -> str:
         except Exception:
             pass
 
-    # Fallback to mock slots
-    available = [s for s in ALL_SLOTS if _parse_slot_datetime(date, s) > now]
-    if not available:
-        return f"No available slots on {date}. Please choose another date."
-    return (
-        f"Available slots on {date}: {', '.join(available)}. "
-        "To book, please provide your name and email."
-    )
+    return "Unable to reach the booking system. Please call us at (087) 123-4567 to check availability."
 
 
 @tool
@@ -141,25 +120,14 @@ def book_appointment(
         patient_email: Email address of the patient.
         slot: The desired appointment slot (e.g. '2026-03-15 at 10:30 AM').
     """
-    now = datetime.now(timezone.utc)
-
-    # Validate slot is in the future
-    try:
-        date_part, time_part = slot.split(" at ")
-        slot_label = time_part.strip()
-        if slot_label in _SLOT_HOURS:
-            slot_dt = _parse_slot_datetime(date_part.strip(), slot_label)
-            if slot_dt <= now:
-                return (
-                    f"Sorry, {slot} has already passed. "
-                    "Please use get_available_slots to see what's still available."
-                )
-    except Exception:
-        pass
+    # Confirm slot is available via Calendly — this also catches past slots
+    _, event_type_uri = _fetch_calendly_identifiers()
+    if not event_type_uri:
+        return "Unable to reach the booking system. Please call us at (087) 123-4567 to book your appointment."
 
     session_id = config.get("configurable", {}).get("thread_id", "default")
-    appointment_id = str(uuid.uuid4())
 
+    # Check session booking limits before doing anything else
     db = SessionLocal()
     try:
         prior = db.query(SessionBooking).filter(
@@ -178,28 +146,112 @@ def book_appointment(
                 f"An appointment for {patient_name} has already been booked in this session. "
                 "Each patient can only be booked once per session."
             )
+    finally:
+        db.close()
 
-        pin = create_pin_record(db, appointment_id, patient_name, patient_email)
+    # Generate PIN before creating the Calendly booking so it can be embedded
+    pin = generate_pin()
+
+    try:
+        date_part = slot.split(" at ")[0].strip()
+        time_label = slot.split(" at ")[1].strip()
+    except (ValueError, IndexError):
+        return "Invalid slot format. Please use a slot from get_available_slots (e.g. '2026-03-20 at 9:00 AM')."
+
+    with httpx.Client(timeout=15) as client:
+        # Find the exact ISO start_time matching the requested slot label
+        r = client.get(
+            f"{CALENDLY_BASE_URL}/event_type_available_times",
+            headers=_headers(),
+            params={
+                "event_type": event_type_uri,
+                "start_time": f"{date_part}T00:00:00.000000Z",
+                "end_time": f"{date_part}T23:59:59.000000Z",
+            },
+        )
+        if not r.is_success:
+            return "Unable to verify slot availability. Please call us at (087) 123-4567."
+
+        matching_start_time = None
+        available_labels = []
+        for s in r.json().get("collection", []):
+            slot_dt = datetime.fromisoformat(s["start_time"].replace("Z", "+00:00"))
+            label = slot_dt.strftime("%-I:%M %p")
+            available_labels.append(label)
+            if label == time_label:
+                matching_start_time = s["start_time"]
+
+        if not matching_start_time:
+            if available_labels:
+                return (
+                    f"Sorry, {slot} is not available. "
+                    f"Available slots on {date_part}: {', '.join(available_labels)}."
+                )
+            return f"No available slots on {date_part}. Please choose another date."
+
+        # Get location from event type
+        et_r = client.get(
+            f"{CALENDLY_BASE_URL}/event_types/{event_type_uri.split('/')[-1]}",
+            headers=_headers(),
+        )
+        booking_location = {"kind": "physical", "location": "Acme Dental Clinic"}
+        if et_r.is_success:
+            locs = et_r.json().get("resource", {}).get("locations", [])
+            if locs:
+                booking_location = {
+                    "kind": locs[0].get("kind", "physical"),
+                    "location": locs[0].get("location", "Acme Dental Clinic"),
+                }
+
+        name_parts = patient_name.strip().split(" ", 1)
+        booking_r = client.post(
+            f"{CALENDLY_BASE_URL}/invitees",
+            headers=_headers(),
+            json={
+                "event_type": event_type_uri,
+                "start_time": matching_start_time,
+                "invitee": {
+                    "name": patient_name,
+                    "first_name": name_parts[0],
+                    "last_name": name_parts[1] if len(name_parts) > 1 else "",
+                    "email": patient_email,
+                    "timezone": "Europe/Dublin",
+                },
+                "location": booking_location,
+                "booking_source": "ai_scheduling_assistant",
+                "questions_and_answers": [
+                    {"question": "Security PIN", "answer": pin, "position": 1}
+                ],
+            },
+        )
+
+    if not booking_r.is_success:
+        return (
+            f"The booking could not be completed in Calendly ({booking_r.status_code}). "
+            "Please call us at (087) 123-4567 to book your appointment."
+        )
+
+    # Use Calendly's scheduled event UUID as our appointment_id
+    # Response field is "event", not "scheduled_event"
+    scheduled_event_uri = booking_r.json().get("resource", {}).get("event", "")
+    appointment_id = scheduled_event_uri.split("/")[-1] if scheduled_event_uri else patient_email
+
+    # Store PIN record in DB
+    db = SessionLocal()
+    try:
+        create_pin_record(db, appointment_id, patient_name, patient_email, pin=pin)
         db.add(SessionBooking(session_id=session_id, patient_name=patient_name))
         db.commit()
     finally:
         db.close()
 
-    try:
-        asyncio.get_event_loop().run_until_complete(
-            send_pin_email(patient_email, patient_name, appointment_id, pin, slot)
-        )
-    except Exception:
-        pass
-
     return (
-        f"Your appointment has been confirmed for {patient_name} at {slot}. "
-        f"A confirmation email is on its way to {patient_email} with your appointment details "
-        f"and a personal 6-digit security PIN. "
-        f"Your PIN is unique to this booking — it was generated just for you and is never shown in this chat. "
-        f"You will need to provide your name and PIN any time you want to look up, cancel, or reschedule your appointment, "
-        f"so please keep it safe. "
-        f"Your appointment reference is {appointment_id}."
+        f"Appointment confirmed for {patient_name} on {slot}.\n\n"
+        f"Your security PIN is: **{pin}**\n\n"
+        f"Please save this PIN — you will need it along with your name to look up, "
+        f"amend, or cancel your appointment in a new session. "
+        f"Calendly will also send a confirmation email to {patient_email}.\n\n"
+        f"Appointment reference: {appointment_id}"
     )
 
 
@@ -226,14 +278,12 @@ def lookup_appointment(patient_name: str, config: RunnableConfig, pin: str = "")
         ).first()
 
         if session_match:
-            # Fetch the record directly without PIN verification
             from backend.db.models import AppointmentPin
             record = db.query(AppointmentPin).filter(
                 AppointmentPin.patient_name.ilike(patient_name.strip())
             ).order_by(AppointmentPin.created_at.desc()).first()
             if not record:
                 return f"No appointment record found for {patient_name}."
-            patient_email = record.patient_email
             appointment_id = record.appointment_id
         else:
             # New session — PIN required
@@ -245,48 +295,31 @@ def lookup_appointment(patient_name: str, config: RunnableConfig, pin: str = "")
             success, message, record = verify_pin_by_name(db, patient_name, pin)
             if not success:
                 return message
-            patient_email = record.patient_email
             appointment_id = record.appointment_id
     finally:
         db.close()
 
-    # Try to get real appointment details from Calendly
-    user_uri, _ = _fetch_calendly_identifiers()
-    if user_uri and patient_email:
-        try:
-            with httpx.Client(timeout=10) as client:
-                r = client.get(
-                    f"{CALENDLY_BASE_URL}/scheduled_events",
-                    headers=_headers(),
-                    params={
-                        "user": user_uri,
-                        "invitee_email": patient_email,
-                        "status": "active",
-                        "count": 5,
-                        "sort": "start_time:asc",
-                    },
-                )
-            if r.is_success:
-                events = r.json().get("collection", [])
-                if events:
-                    event = events[0]
-                    start = datetime.fromisoformat(
-                        event["start_time"].replace("Z", "+00:00")
-                    )
-                    slot_str = start.strftime("%A, %d %B %Y at %-I:%M %p GMT")
-                    calendly_uri = event["uri"]
-                    return (
-                        f"Appointment found for {patient_name}: {slot_str}. "
-                        f"Appointment reference: {calendly_uri.split('/')[-1]}"
-                    )
-        except Exception:
-            pass
+    # Fetch appointment details directly from Calendly using the stored event UUID
+    try:
+        with httpx.Client(timeout=10) as client:
+            r = client.get(
+                f"{CALENDLY_BASE_URL}/scheduled_events/{appointment_id}",
+                headers=_headers(),
+            )
+        if r.is_success:
+            event = r.json().get("resource", {})
+            start = datetime.fromisoformat(event["start_time"].replace("Z", "+00:00"))
+            slot_str = start.strftime("%A, %d %B %Y at %-I:%M %p GMT")
+            return (
+                f"Appointment found for {patient_name}: {slot_str}. "
+                f"Appointment reference: {appointment_id}"
+            )
+    except Exception:
+        pass
 
-    # Fallback: return what we have in our DB
     return (
-        f"Appointment confirmed for {patient_name}. "
-        f"Your appointment ID is {appointment_id}. "
-        "For full appointment details please check your confirmation email."
+        f"Could not retrieve appointment details from Calendly for {patient_name}. "
+        "Please check your confirmation email or call us at (087) 123-4567."
     )
 
 
@@ -318,7 +351,7 @@ def cancel_appointment(patient_name: str, config: RunnableConfig, pin: str = "",
             ).order_by(AppointmentPin.created_at.desc()).first()
             if not record:
                 return f"No appointment record found for {patient_name}."
-            patient_email = record.patient_email
+            appointment_id = record.appointment_id
         else:
             # New session — PIN required
             if not pin:
@@ -329,48 +362,29 @@ def cancel_appointment(patient_name: str, config: RunnableConfig, pin: str = "",
             success, message, record = verify_pin_by_name(db, patient_name, pin)
             if not success:
                 return message
-            patient_email = record.patient_email
+            appointment_id = record.appointment_id
     finally:
         db.close()
 
-    # Try to cancel via Calendly API
-    user_uri, _ = _fetch_calendly_identifiers()
-    if user_uri and patient_email:
-        try:
-            with httpx.Client(timeout=10) as client:
-                # Find active event for this patient
-                r = client.get(
-                    f"{CALENDLY_BASE_URL}/scheduled_events",
-                    headers=_headers(),
-                    params={
-                        "user": user_uri,
-                        "invitee_email": patient_email,
-                        "status": "active",
-                        "count": 1,
-                        "sort": "start_time:asc",
-                    },
-                )
-                if r.is_success:
-                    events = r.json().get("collection", [])
-                    if events:
-                        event_uuid = events[0]["uri"].split("/")[-1]
-                        cancel_r = client.post(
-                            f"{CALENDLY_BASE_URL}/scheduled_events/{event_uuid}/cancellation",
-                            headers=_headers(),
-                            json={"reason": reason or "Patient requested cancellation via chat"},
-                        )
-                        if cancel_r.is_success:
-                            return (
-                                f"Appointment for {patient_name} has been successfully cancelled in Calendly. "
-                                "A cancellation confirmation will be sent to your email."
-                            )
-        except Exception:
-            pass
+    # Cancel directly using the stored Calendly event UUID
+    try:
+        with httpx.Client(timeout=10) as client:
+            cancel_r = client.post(
+                f"{CALENDLY_BASE_URL}/scheduled_events/{appointment_id}/cancellation",
+                headers=_headers(),
+                json={"reason": reason or "Patient requested cancellation via chat"},
+            )
+        if cancel_r.is_success:
+            return (
+                f"Appointment for {patient_name} has been successfully cancelled. "
+                "A cancellation confirmation will be sent to your email."
+            )
+    except Exception:
+        pass
 
-    # Fallback confirmation (e.g. mock bookings not in Calendly)
     return (
-        f"Appointment for {patient_name} has been cancelled. "
-        "A cancellation confirmation will be sent to your email."
+        "Cancellation could not be completed. "
+        "Please call us at (087) 123-4567 to cancel your appointment."
     )
 
 
