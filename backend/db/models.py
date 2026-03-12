@@ -43,6 +43,18 @@ class SessionBooking(Base):
     )
 
 
+class ConversationReview(Base):
+    """Admin review status for a chat session."""
+    __tablename__ = "conversation_reviews"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    # "unreviewed" | "safe" | "risky" | "dangerous"
+    status: Mapped[str] = mapped_column(String, default="unreviewed")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class SessionNote(Base):
     """Agent scratchpad — one note per session, upserted as the conversation progresses."""
     __tablename__ = "session_notes"
