@@ -25,12 +25,15 @@ def create_pin_record(
     appointment_id: str,
     patient_name: str,
     patient_email: str,
+    pin: str | None = None,
 ) -> str:
     """
-    Generate a PIN, store its hash, and return the plaintext PIN.
-    The plaintext PIN is never persisted — only the hash is stored.
+    Generate (or accept) a PIN, store its hash, and return the plaintext PIN.
+    Pass `pin` explicitly when it needs to be embedded in external systems (e.g. Calendly)
+    before being stored here. The plaintext PIN is never persisted — only the hash is stored.
     """
-    pin = generate_pin()
+    if pin is None:
+        pin = generate_pin()
     record = AppointmentPin(
         appointment_id=appointment_id,
         patient_name=patient_name,
