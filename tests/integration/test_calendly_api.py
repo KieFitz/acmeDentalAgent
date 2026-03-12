@@ -213,6 +213,13 @@ def test_create_invitee_booking():
         },
         "location": booking_location,
         "booking_source": "ai_scheduling_assistant",
+        "questions_and_answers": [
+            {
+                "question": "Your PIN",
+                "answer": "string",
+                "position": 1,
+            }
+        ],
     }
 
     print(f"\nPayload: {_json.dumps(payload, indent=2)}")
