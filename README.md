@@ -153,9 +153,9 @@ uv run pytest tests/ -v
 - [ ] **Make Sure AI doesn't invent opening hours**
 
 ### Medium priority
-- [ ] **Edge case hunting** — test corner cases: same patient name different email, booking on a Saturday[failed], cancelling an already-cancelled appointment, lookup when Calendly API is down, rescheduling for same time and day.
-- [X] **Wire up Calendly available slots** — confirm `get_available_slots` is returning real times from `GET /event_type_available_times` for the correct event type
-- [X] **Reschedule flow** — implement `reschedule_appointment(patient_name, pin, new_slot)` tool; currently only cancel is supported. reschedule not supported in API from Calendly.
+- [x] **Edge case hunting** — test corner cases: same patient name different email, booking on a Saturday[failed], cancelling an already-cancelled appointment, lookup when Calendly API is down, rescheduling for same time and day.
+- [x] **Wire up Calendly available slots** — confirm `get_available_slots` is returning real times from `GET /event_type_available_times` for the correct event type
+- [x] **Reschedule flow** — implement `reschedule_appointment(patient_name, pin, new_slot)` tool; currently only cancel is supported. reschedule not supported in API from Calendly.
 
 ### Lower priority
 - [ ] **Persistent MemorySaver** — replace in-memory `MemorySaver` with `langgraph-checkpoint-sqlite` so conversation context survives container restarts
