@@ -4,11 +4,13 @@ AI-powered receptionist chatbot for Acme Dental clinic. Aria handles appointment
 cancellations, FAQs, and clinic queries via a chat interface backed by a LangGraph + FastAPI
 agent and the Calendly API.
 
+> For architectural decisions and design rationale, see [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
+
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
+| Layer | Technology | 
 |---|---|
 | LLM | Google Gemini 2.0 Flash (via `langchain-google-genai`) |
 | Agent | LangGraph `create_react_agent` with `MemorySaver` |
