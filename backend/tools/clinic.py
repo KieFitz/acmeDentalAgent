@@ -16,26 +16,13 @@ def _load_kb() -> str:
 @tool
 def get_clinic_info() -> str:
     """Returns general information about Acme Dental clinic: hours, address, phone, and what we offer."""
-    return (
-        "Acme Dental Clinic — routine dental check-ups only (30 min per appointment, one dentist). "
-        "Price: €60 standard | €50 students/seniors (65+). "
-        "Hours: Mon–Fri 8am–6pm, Sat 9am–2pm. "
-        "No walk-ins — all visits must be booked in advance. "
-        "No emergency dental treatment offered. "
-        "Payment: card, contactless, or cash in-clinic. No deposit required to book."
-    )
+    return _load_kb()
 
 
 @tool
 def get_services() -> str:
     """Returns the services offered at Acme Dental."""
-    return (
-        "Acme Dental offers routine dental check-ups only. "
-        "Each check-up (30 min) includes: full oral examination, gum health check, "
-        "review of any concerns, and basic recommendations. "
-        "X-rays are NOT included — the dentist will advise if needed. "
-        "We do not offer fillings, whitening, orthodontics, or emergency care."
-    )
+    return _load_kb()
 
 
 @tool
