@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
-from backend.tools.calendly import get_available_slots, book_appointment
+from backend.tools.calendly import get_available_slots, book_appointment, get_opening_hours
 
 
 # ── get_available_slots ──────────────────────────────────────────────────────
