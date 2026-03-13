@@ -15,7 +15,8 @@ def _load_kb() -> str:
 
 @tool
 def get_clinic_info() -> str:
-    """Returns general information about Acme Dental clinic: hours, address, phone, and what we offer."""
+    """Returns general information about Acme Dental clinic: address, phone, services, and policies.
+    Do NOT use this for opening hours — call get_opening_hours instead."""
     return _load_kb()
 
 
@@ -46,5 +47,9 @@ def get_current_datetime() -> str:
         f"Day of week: {now.strftime('%A')}."
     )
 
-
-clinic_tools = [get_clinic_info, get_services, search_faq, get_current_datetime]
+@tool
+def get_opening_hours() -> str:
+    """Deals with query of what opening hours the clinic has. Always call this tool to suggest available appointment times. Do not guess."""
+    # This is a placeholder implementation. In a real implementation, this would make an API call to Calendly to fetch the live schedule.
+    return "We are open Monday to Friday, Just let me know what day you would like to book for and if you prefer morning or afternoon and I can check the available slots for you."
+clinic_tools = [get_clinic_info, get_services, search_faq, get_current_datetime, get_opening_hours]
