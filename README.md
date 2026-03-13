@@ -33,23 +33,25 @@ backend/
   KNOWLEDGE_BASE.md      # Clinic FAQ loaded by search_faq tool
   db/
     database.py          # SQLAlchemy engine + session + init_db()
-    models.py            # AppointmentPin, ConversationMessage, SessionBooking, SessionNote
+    models.py            # AppointmentPin, ConversationMessage, SessionBooking, ConversationReview
   routes/
-    chat.py              # POST /chat — main endpoint + conversation log endpoints
+    chat.py              # POST /chat — main chat endpoint
+    admin.py             # Admin API — conversation list, transcript view, review status
   services/
     email_service.py     # Async SMTP confirmation emails
     pin_service.py       # PIN generation, hashing, verification, lockout
   tools/
     __init__.py          # Exports all_tools
-    calendly.py          # Booking, lookup, cancel, available slots (Calendly API)
-    clinic.py            # Clinic info, services, FAQ search, datetime tool
+    calendly.py          # Booking, lookup, cancel, reschedule, available slots (Calendly API)
+    clinic.py            # Clinic info, services, FAQ search, datetime, opening hours tools
 frontend/
-  index.html             # Single-file chat UI (HTML/CSS/JS)
-  nginx.conf             # Nginx — serves frontend, proxies /chat/ to backend
+  index.html             # Patient-facing chat UI (HTML/CSS/JS)
+  admin.html             # Admin UI — browse conversations, view transcripts, mark sessions
+  nginx.conf             # Nginx — serves frontend, proxies /chat/ and /admin-api/ to backend
 tests/
   tools/
-    test_clinic.py       # 26 tests for clinic tools
-    test_calendly.py     # Slot filtering, booking validation tests
+    test_clinic.py       # Tests for clinic tools
+    test_calendly.py     # Slot filtering, booking validation, opening hours tests
   services/
     test_pin_service.py  # PIN generation, verification, lockout tests
 Dockerfile               # Backend image (uv + Python 3.13)
@@ -115,12 +117,22 @@ Open **frontend/index.html** directly in your browser.
 - Off-topic and sensitive medical topic blocking
 - Max 3 bookings per session, unique patient names per session (this is to allow bookings for family members if convinient to book for kids at the same time.)
 
-### Conversation logging
+### Conversation logging & admin review
 Every message pair is stored in `ConversationMessage` with a `session_id`.
-View logs via:
+
+The **admin dashboard** (`http://localhost:3000/admin.html`) lets you:
+- Browse all conversation sessions with timestamps and a first-message preview
+- View the full transcript for any session
+- Mark each session with a review status: `unreviewed` / `safe` / `risky` / `dangerous`
+- Add free-text notes to flag specific issues
+
+Review statuses are stored in a `ConversationReview` table and are intended to inform tuning of the system prompt, guardrails, and tool behaviour over time.
+
+Raw API endpoints:
 ```
-GET /chat/conversations
-GET /chat/conversations/{session_id}
+GET  /admin-api/conversations                    # list all sessions with review status
+GET  /admin-api/conversations/{session_id}       # full transcript + review for a session
+POST /admin-api/conversations/{session_id}/review  # set status and notes
 ```
 
 ---
@@ -138,8 +150,9 @@ uv run pytest tests/ -v
 |---|---|---|
 | POST | `/chat/` | Send a message to Aria |
 | GET | `/health` | Health check |
-| GET | `/chat/conversations` | List all conversation sessions |
-| GET | `/chat/conversations/{id}` | Full transcript for a session |
+| GET | `/admin-api/conversations` | List sessions with review status (admin) |
+| GET | `/admin-api/conversations/{id}` | Full transcript + review for a session (admin) |
+| POST | `/admin-api/conversations/{id}/review` | Set review status and notes (admin) |
 
 ---
 
@@ -149,8 +162,8 @@ uv run pytest tests/ -v
 - [x] **Refine prompts** — review conversation logs to identify where Aria gives robotic or unclear responses; improve the system prompt and tool docstrings accordingly
 - [x] **Confirm live bookings with Calendly** — wire up `book_appointment` to create a real Calendly event via the scheduling links API or a Calendly webhook flow; currently bookings are recorded locally only
 - [x] **Test fraud prevention end-to-end** — manually test PIN lockout, wrong-name rejection, and 3-booking-per-session limit with live data; verify bcrypt timing is acceptable
-- [X] **Agent to ammend bookings if session same** - Agent should be able to ammend or cancel bookings if the session is still the same, without requirment for PIN. PIN should only be for if there is a new session.
-- [ ] **Make Sure AI doesn't invent opening hours**
+- [x] **Agent to ammend bookings if session same** - Agent should be able to ammend or cancel bookings if the session is still the same, without requirment for PIN. PIN should only be for if there is a new session.
+- [x] **Make Sure AI doesn't invent opening hours**
 
 ### Medium priority
 - [x] **Edge case hunting** — test corner cases: same patient name different email, booking on a Saturday[failed], cancelling an already-cancelled appointment, lookup when Calendly API is down, rescheduling for same time and day.
@@ -160,4 +173,4 @@ uv run pytest tests/ -v
 ### Lower priority
 - [ ] **Persistent MemorySaver** — replace in-memory `MemorySaver` with `langgraph-checkpoint-sqlite` so conversation context survives container restarts
 - [ ] **Rate limiting** — add per-IP or per-session message rate limiting to prevent API abuse
-- [X] **Admin dashboard** — simple UI to browse conversation logs and flag sessions for review
+- [x] **Admin dashboard** — UI to browse conversation logs, view full transcripts, and mark sessions as safe / risky / dangerous with notes to inform future guardrail and prompt tuning
